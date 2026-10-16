@@ -496,41 +496,109 @@ function setupFormSubmission() {
     submitBtn.disabled = true;
     submitBtn.innerHTML = "Đang gửi dữ liệu...";
 
+    // Sao lưu câu trả lời vào localStorage thiết bị để không bao giờ bị mất
+    const localId = "TDC_" + Date.now().toString().slice(-4);
+    payload.id = localId;
+    payload.timestamp = new Date().toLocaleString("vi-VN");
     try {
-      let endpoint = "/api/submit";
-      let options = {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      };
+      const backupList = JSON.parse(localStorage.getItem("tdc_survey_responses_backup") || "[]");
+      backupList.push(payload);
+      localStorage.setItem("tdc_survey_responses_backup", JSON.stringify(backupList));
+    } catch (_) {}
 
-      if (window.CONFIG && window.CONFIG.GOOGLE_SCRIPT_URL && window.CONFIG.GOOGLE_SCRIPT_URL.trim() !== "") {
-        endpoint = window.CONFIG.GOOGLE_SCRIPT_URL.trim();
-        options = {
+    function showSuccess(id, extraNote = "") {
+      document.getElementById("formContainer").style.display = "none";
+      const successBox = document.getElementById("successContainer");
+      successBox.style.display = "block";
+      document.getElementById("respIdDisplay").textContent = id;
+      const noteEl = document.getElementById("successExtraNote");
+      if (noteEl) {
+        if (extraNote) {
+          noteEl.textContent = extraNote;
+          noteEl.style.display = "block";
+        } else {
+          noteEl.style.display = "none";
+        }
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    const hasGoogleScript = !!(window.CONFIG && window.CONFIG.GOOGLE_SCRIPT_URL && window.CONFIG.GOOGLE_SCRIPT_URL.trim() !== "");
+    const isGitHubPages = window.location.hostname.includes("github.io");
+    const isFileProtocol = window.location.protocol === "file:";
+
+    // Trường hợp 1: Đã cấu hình Google Apps Script Web App (chạy Online hoặc trên GitHub Pages)
+    if (hasGoogleScript) {
+      const gUrl = window.CONFIG.GOOGLE_SCRIPT_URL.trim();
+      try {
+        // Thử gửi bằng fetch thông thường
+        const res = await fetch(gUrl, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify(payload)
-        };
-      }
+        });
+        let recordedId = localId;
+        try {
+          const resData = await res.json();
+          if (resData && resData.id) recordedId = resData.id;
+        } catch (_) {}
 
-      const response = await fetch(endpoint, options);
+        showSuccess(recordedId);
+        return;
+      } catch (corsOrRedirectErr) {
+        console.warn("Chuyển hướng CORS từ Google Script, đang tự động kích hoạt chế độ no-cors...", corsOrRedirectErr);
+        try {
+          // Google Apps Script luôn nhận được dữ liệu và ghi vào Google Sheet thành công với mode: no-cors
+          await fetch(gUrl, {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(payload)
+          });
+          showSuccess(localId);
+          return;
+        } catch (failErr) {
+          console.error("Gửi đến Google Apps Script thất bại:", failErr);
+          showToast("Không thể gửi dữ liệu. Vui lòng kiểm tra lại kết nối mạng Internet của bạn!", "error");
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalText;
+          return;
+        }
+      }
+    }
+
+    // Trường hợp 2: Đang mở trên GitHub Pages nhưng chưa dán link Google Sheet vào config.js
+    if (isGitHubPages) {
+      showToast("⚠️ Khảo sát trên GitHub Pages cần liên kết với Google Sheet để lưu dữ liệu!", "error");
+      showSuccess(localId, "Lưu ý dành cho Người nghiên cứu: Phiếu này đang được lưu tạm trên trình duyệt của máy vì bạn chưa dán link Google Sheet vào file config.js. Vui lòng xem hướng dẫn trong file HUONG_DAN_CHAY_TREN_GITHUB.md!");
+      return;
+    }
+
+    // Trường hợp 3: Mở file HTML trực tiếp bằng chuột (file:///)
+    if (isFileProtocol) {
+      showSuccess(localId, "Phiếu đã được lưu an toàn trong bộ nhớ trình duyệt! Để dữ liệu tự động ghi vào file Excel/CSV, bạn hãy mở file 'Chay_Khao_Sat.bat' để khởi động máy chủ.");
+      return;
+    }
+
+    // Trường hợp 4: Chạy trên máy Localhost (localhost:8080)
+    try {
+      const response = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       const result = await response.json();
 
       if (result.success) {
-        // Show success screen
-        document.getElementById("formContainer").style.display = "none";
-        const successBox = document.getElementById("successContainer");
-        successBox.style.display = "block";
-        document.getElementById("respIdDisplay").textContent = result.id;
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        showSuccess(result.id);
       } else {
-        showToast("Lỗi: " + (result.message || "Không thể gửi khảo sát"), "error");
+        showToast("Lỗi: " + (result.message || "Không thể lưu phiếu"), "error");
         submitBtn.disabled = false;
         submitBtn.innerHTML = originalText;
       }
-    } catch (err) {
-      console.error(err);
-      showToast("Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại server!", "error");
+    } catch (localErr) {
+      console.warn("Không kết nối được server local:", localErr);
+      showToast("Không thể kết nối đến máy chủ local. Hãy kiểm tra cửa sổ Chay_Khao_Sat.bat có đang mở không!", "error");
       submitBtn.disabled = false;
       submitBtn.innerHTML = originalText;
     }

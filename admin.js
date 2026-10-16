@@ -119,13 +119,24 @@ async function loadData() {
     }
     const res = await fetch(endpoint);
     allResponses = await res.json();
-    populateFacultyFilter();
-    updateDashboardUI();
-    applyFilters();
   } catch (err) {
-    console.error("Error loading responses:", err);
-    showAdminToast("Lỗi khi tải dữ liệu từ máy chủ", "error");
+    console.warn("Lỗi tải từ endpoint, kiểm tra bản sao lưu trong localStorage...", err);
+    try {
+      const backup = JSON.parse(localStorage.getItem("tdc_survey_responses_backup") || "[]");
+      if (backup.length > 0) {
+        allResponses = backup;
+        showAdminToast(`Đang hiển thị ${backup.length} phiếu lưu tạm trong trình duyệt!`, "info");
+      } else {
+        allResponses = [];
+        showAdminToast("Không thể kết nối đến máy chủ", "error");
+      }
+    } catch (_) {
+      allResponses = [];
+    }
   }
+  populateFacultyFilter();
+  updateDashboardUI();
+  applyFilters();
 }
 
 // Client-side CSV Export (Hoạt động hoàn hảo cả trên GitHub Pages lẫn máy local)
